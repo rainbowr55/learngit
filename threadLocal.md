@@ -144,7 +144,7 @@ public class PersonAccountThread extends Thread {
     }
 
 ```
-创建了Value对象并赋值给线程中的localValues，然后初始化value对象里的值 这就为为不同线程提供不同的数据副本，可以在不同线程中互不干扰地存储并提供数据。因为每个线程从同一个ThreadLocal对象获取到的Vaule都是各自线程new出来的，并且为了保证每个线程正确的从同一个ThreadLocal对象取自己的Value所以在进行存储Value的时候要使用对应起来， 下面看下ThreadLocal的值到底是怎么localValues中进行存储的。在localValues内部有一个数组：private Object[] table，ThreadLocal的值就是存在在这个table数组中，下面看下localValues是如何使用put方法将ThreadLocal的值存储到table数组中的，如下所示：
+创建了Value对象并赋值给线程中的localValues，然后初始化value对象里的值 这就为不同线程提供不同的数据副本，可以在不同线程中互不干扰地存储并提供数据。因为每个线程从同一个ThreadLocal对象获取到的Vaule都是各自线程new出来的，并且为了保证每个线程正确的从同一个ThreadLocal对象取自己的Value所以在进行存储Value的时候要使用对应起来， 下面看下ThreadLocal的值到底是怎么localValues中进行存储的。在localValues内部有一个数组：private Object[] table，ThreadLocal的值就是存在在这个table数组中，下面看下localValues是如何使用put方法将ThreadLocal的值存储到table数组中的，如下所示：
 ```java	
 
        /**
