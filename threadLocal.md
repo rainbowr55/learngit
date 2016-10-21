@@ -222,4 +222,137 @@ public class PersonAccountThread extends Thread {
 ```
 如果localValues对象不为null，那就取出它的table数组并找出ThreadLocal的reference对象在table数组中的位置，然后table数组中的下一个位置所存储的数据就是ThreadLocal的值。从ThreadLocal的set和get方法可以看出，它们所操作的对象都是当前线程的localValues对象的table数组，因此在不同线程中访问同一个ThreadLocal的set和get方法，它们对ThreadLocal所做的读写操作仅限于各自线程的内部，这就是为什么ThreadLocal可以在多个线程中互不干扰地存储和修改数据，理解ThreadLocal的实现方式有助于理解Looper的工作原理。
 
+#### ThreadLocal的内存泄露
+
+![](http://incdn1.b0.upaiyun.com/2016/10/2fdbd552107780c5ae5f98126b38d5a4.png)
+
+![](http://images.cnitblog.com/blog/390680/201306/23002121-ef97b5c9bb204f3c9712377013a619fe.png)
+上图是JAVA中的ThreadLocal的实现每个thread中都存在一个map, map的类型是ThreadLocal.ThreadLocalMap. Map中的key为一个threadlocal实例. 这个Map的确使用了弱引用,不过弱引用只是针对key. 每个key都弱引用指向threadlocal. 当把threadlocal实例置为null以后,没有任何强引用指向threadlocal实例,所以threadlocal将会被gc回收. 但是,我们的value却不能回收,因为存在一条从current thread连接过来的强引用. 只有当前thread结束以后, current thread就不会存在栈中,强引用断开, Current Thread, Map, value将全部被GC回收.
+所以得出一个结论就是只要这个线程对象被gc回收，就不会出现内存泄露，但在threadLocal设为null和线程结束这段时间不会被回收的，就发生了我们认为的内存泄露。其实这是一个对概念理解的不一致，也没什么好争论的。最要命的是线程对象不被回收的情况，这就发生了真正意义上的内存泄露。比如使用线程池的时候，线程结束是不会销毁的，会再次使用的。就可能出现内存泄露。　　
+PS.Java为了最小化减少内存泄露的可能性和影响，在ThreadLocal的get,set的时候都会清除线程Map里所有key为null的value。所以最怕的情况就是，threadLocal对象设null了，开始发生“内存泄露”，然后使用线程池，这个线程结束，线程放回线程池中不销毁，这个线程一直不被使用，或者分配使用了又不再调用get,set方法，那么这个期间就会发生真正的内存泄露。
+
+
+我们看到Android中ThreadLocal中并没有使用Entry来存储value了，而是直接使用数组来存储，我们看到的put方法中,table中的key存储的是ThreadLocal的弱引用，value存储数组中key存储的下一个位置中，这样key为null的对象也会导致内存泄露
+```java
+// Go back and replace first tombstone.
+table[firstTombstone] = key.reference;
+table[firstTombstone + 1] = value;
+```
+重新来看看put方法和remove方法：
+```java 
+   /**
+         * Sets entry for given ThreadLocal to given value, creating an
+         * entry if necessary.
+         */
+        void put(ThreadLocal<?> key, Object value) {
+            cleanUp();
+
+            // Keep track of first tombstone. That's where we want to go back
+            // and add an entry if necessary.
+            int firstTombstone = -1;
+
+            for (int index = key.hash & mask;; index = next(index)) {
+                Object k = table[index];
+
+                if (k == key.reference) {
+                    // Replace existing entry.
+                    table[index + 1] = value;
+                    return;
+                }
+
+                if (k == null) {
+                    if (firstTombstone == -1) {
+                        // Fill in null slot.
+                        table[index] = key.reference;
+                        table[index + 1] = value;
+                        size++;
+                        return;
+                    }
+
+                    // Go back and replace first tombstone.
+                    table[firstTombstone] = key.reference;
+                    table[firstTombstone + 1] = value;
+                    tombstones--;
+                    size++;
+                    return;
+                }
+
+                // Remember first tombstone.
+                if (firstTombstone == -1 && k == TOMBSTONE) {
+                    firstTombstone = index;
+                }
+            }
+        }
+
+        /**
+         * Removes entry for the given ThreadLocal.
+         */
+        void remove(ThreadLocal<?> key) {
+            cleanUp();
+
+            for (int index = key.hash & mask;; index = next(index)) {
+                Object reference = table[index];
+
+                if (reference == key.reference) {
+                    // Success!
+                    table[index] = TOMBSTONE;
+                    table[index + 1] = null;
+                    tombstones++;
+                    size--;
+                    return;
+                }
+
+                if (reference == null) {
+                    // No entry found.
+                    return;
+                }
+            }
+        }
  
+```
+这两个方法第一件事就是调用cleanUp()方法，这个cleanUp()方法就是清除线程Value对象里table数据所存储的key为null的value：
+```java
+    /**
+         * Cleans up after garbage-collected thread locals. 清除被回收的ThreadLocals所对应的Value
+         */
+        private void cleanUp() {
+            if (rehash()) {
+                // If we rehashed, we needn't clean up (clean up happens as
+                // a side effect).
+                return;
+            }
+
+            if (size == 0) {
+                // No live entries == nothing to clean.
+                return;
+            }
+
+            // Clean log(table.length) entries picking up where we left off
+            // last time.
+            int index = clean;
+            Object[] table = this.table;
+            for (int counter = table.length; counter > 0; counter >>= 1,
+                    index = next(index)) {
+                Object k = table[index];
+
+                if (k == TOMBSTONE || k == null) {
+                    continue; // on to next entry
+                }
+
+                // The table can only contain null, tombstones and references.
+                @SuppressWarnings("unchecked")
+                Reference<ThreadLocal<?>> reference
+                        = (Reference<ThreadLocal<?>>) k;
+                if (reference.get() == null) {
+                    // This thread local was reclaimed by the garbage collector. 该ThreadLocal被GC回收掉
+                    table[index] = TOMBSTONE;
+                    table[index + 1] = null;
+                    tombstones++;
+                    size--;
+                }
+            }
+
+            // Point cursor to next index.
+            clean = index;
+        }
+```
