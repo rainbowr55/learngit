@@ -13,7 +13,7 @@
 ###同步到远程库###
     $ git push -u origin master
 ###查看log###
-    $ git log 
+    $ git log
     如果嫌输出信息太多，看得眼花缭乱的，可以试试加上--pretty=oneline参数：
     $ git log --pretty=oneline
 ###回退版本###
@@ -66,8 +66,15 @@
     $ git merge [branch]
     选择一个commit，合并进当前分支
     $ git cherry-pick [commit]
-    删除分支
+    删除分支  
     $ git branch -d [branch-name]
     删除远程分支
     $ git push origin --delete [branch-name]
     $ git branch -dr [remote/branch]
+
+    删除已经被删除的分支
+    git remote prune origin
+    git remote show origin 来查看有关于origin的一些信息，包括分支是否tracking。
+
+    $ ssh -T git@gitlab.ds.XX.com.cn
+    ssh-keygen -t rsa -C "XX@XXX.com"
